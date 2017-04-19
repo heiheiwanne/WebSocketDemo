@@ -3,6 +3,7 @@ package trans.jingjing.com.websocketdemo;
 import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.support.annotation.Nullable;
 import android.support.v4.content.LocalBroadcastManager;
 

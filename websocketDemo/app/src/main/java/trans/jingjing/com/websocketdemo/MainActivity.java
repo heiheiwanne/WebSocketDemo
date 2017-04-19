@@ -4,14 +4,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.os.PowerManager;
+import android.os.Build;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.stealthcopter.networktools.Ping;
 import com.stealthcopter.networktools.ping.PingResult;
@@ -51,7 +50,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private static String PING_baidu_URL = "www.baidu.com"; //ping的外网
     private static String PING_myhost_URL = "spear.xk12.cn";//ping 的内网
 
-    private static int SEND_HEART_PACKET = 2; //发包的间隔 second
+    private static int SEND_HEART_PACKET = 5; //发包的间隔 second
     private static int PING_TIME = 3;//ping的次数
     private static int RE_CONNECT_TIME = 5; //连接失败之后重连次数
 
@@ -100,13 +99,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
         });
 
-//        PowerManager pm = (PowerManager) this.getSystemService(Context.POWER_SERVICE);
-//        PowerManager.WakeLock wakeLock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "PostLocationService");
-//        wakeLock.acquire();
+        wakeLockManager = new WakeLockManager(MainActivity.this);
 
         IntentFilter intentFilter = new IntentFilter();
         intentFilter.addAction(BROAST_ACTION);
-        LocalBroadcastManager.getInstance(this).registerReceiver(mReceiver,intentFilter);
+        LocalBroadcastManager.getInstance(this).registerReceiver(mReceiver, intentFilter);
 
     }
 
@@ -115,9 +112,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     protected void onDestroy() {
         super.onDestroy();
         LocalBroadcastManager.getInstance(this).unregisterReceiver(mReceiver);
-        AlarmManagerUtils.stopPollingService(this,PollingService.ACTION);
     }
 
+    @Override
+    public void finish() {
+        AlarmManagerUtils.stopPollingService(this, PollingService.ACTION);
+        super.finish();
+    }
 
     @Override
     public void onClick(View v) {
@@ -137,11 +138,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
 
     private void startSocket() {
-//        try {
-//            mThread.start();
-//        } catch (Exception e) {
-//        }
-
+        appendTv("-----开始websocket-----");
         //创建WebSocket链接
         Request request = new Request.Builder().url(WEBSOCKETPATH).build();
 
@@ -152,42 +149,60 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 appendTv("onOpen text:" + response.toString());
                 socket = webSocket;
                 isOpen = true;
-                AlarmManagerUtils.startPollingService(MainActivity.this, SEND_HEART_PACKET, PollingService.ACTION);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    try {
+                        mThread.start();
+                    } catch (Exception e) {
+                    }
+                } else {
+                    AlarmManagerUtils.startPollingService(MainActivity.this, SEND_HEART_PACKET, PollingService.ACTION);
+                }
+
             }
 
             @Override
             public void onMessage(WebSocket webSocket, String text) {
                 appendTv("onMessage text:" + text);
-                if (!"40".equals(text)) return;
-                try {
-//                    String token = RSAEncodeUtils.encryptByPrivateKey("81951087878_1223234435");
-                    String token = RSAEncodeUtils.encryptByPrivateKey(mSystemId + "_" + new Date().getTime());
-                    JSONObject jsonObject = new JSONObject("{\"id\":\"" + mSystemId + "\",\"class_id\":\"29367\",\"type\":0,\"token\":\"" + token + "\",\"name\":\"徐明强测试\"}");
-                    JSONArray jsonArray = new JSONArray();
-                    jsonArray.put("student_auth");
-                    jsonArray.put(jsonObject.toString());
-                    socket.send("42" + jsonArray.toString());
-                    appendTv("send text:" + jsonArray.toString());
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                } catch (NoSuchAlgorithmException e) {
-                    e.printStackTrace();
-                } catch (InvalidKeyException e) {
-                    e.printStackTrace();
-                } catch (NoSuchPaddingException e) {
-                    e.printStackTrace();
-                } catch (BadPaddingException e) {
-                    e.printStackTrace();
-                } catch (InvalidKeySpecException e) {
-                    e.printStackTrace();
-                } catch (IllegalBlockSizeException e) {
-                    e.printStackTrace();
+
+                if (text.startsWith("42")) {
+                    isOpen = true;
                 }
+
+                if ("40".equals(text)) {
+                    try {
+//                    String token = RSAEncodeUtils.encryptByPrivateKey("81951087878_1223234435");
+                        String token = RSAEncodeUtils.encryptByPrivateKey(mSystemId + "_" + new Date().getTime());
+                        JSONObject jsonObject = new JSONObject("{\"id\":\"" + mSystemId + "\",\"class_id\":\"29367\",\"type\":0,\"token\":\"" + token + "\",\"name\":\"徐明强测试\"}");
+                        JSONArray jsonArray = new JSONArray();
+                        jsonArray.put("student_auth");
+                        jsonArray.put(jsonObject.toString());
+                        socket.send("42" + jsonArray.toString());
+                        appendTv("send text: 42" + jsonArray.toString());
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    } catch (NoSuchAlgorithmException e) {
+                        e.printStackTrace();
+                    } catch (InvalidKeyException e) {
+                        e.printStackTrace();
+                    } catch (NoSuchPaddingException e) {
+                        e.printStackTrace();
+                    } catch (BadPaddingException e) {
+                        e.printStackTrace();
+                    } catch (InvalidKeySpecException e) {
+                        e.printStackTrace();
+                    } catch (IllegalBlockSizeException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+
             }
 
             @Override
             public void onMessage(WebSocket webSocket, ByteString bytes) {
                 appendTv("onMessage  bytes:" + bytes);
+                wakeLockManager.release();
             }
 
             @Override
@@ -276,16 +291,23 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private void startThread() {
         while (true) {
             if (socket != null && isOpen) {
+                reconnect = 0;
                 String sendStr = "2";
                 socket.send(sendStr);
                 appendTv("onSend text : " + sendStr);
                 setTitle("发包中...");
             } else {
+                reconnect++;
+                if (reconnect == RE_CONNECT_TIME) {
+                    mThread.interrupt();
+                    return;
+                }
                 setTitle("未发包");
+                startSocket();
             }
 
             try {
-                Thread.sleep(SEND_HEART_PACKET);
+                Thread.sleep(SEND_HEART_PACKET * 1000l);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -299,13 +321,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setTitle("未发包");
 
         isOpen = false;
-        if (mThread !=null && !mThread.isInterrupted()) {
+        if (mThread != null && !mThread.isInterrupted()) {
             mThread.interrupt();
         }
         if (socket != null) {
             socket.close(1000, "客户端手动断开");
         }
-        AlarmManagerUtils.stopPollingService(this,PollingService.ACTION);
+        AlarmManagerUtils.stopPollingService(this, PollingService.ACTION);
 //        client.dispatcher().executorService().shutdown();
     }
 
@@ -335,12 +357,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         }
     }
 
-
-
+    WakeLockManager wakeLockManager;
     private int reconnect = 0;
     private BroadcastReceiver mReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
+            wakeLockManager.awake();
             appendTv("-----广播接受者在继续(进程存在)----");
             if (socket != null && isOpen) {
                 reconnect = 0;
@@ -348,10 +370,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 socket.send(sendStr);
                 appendTv("onSend text : " + sendStr);
                 setTitle("发包中...");
-            } else {
+            } else if (socket == null) {
                 reconnect++;
-                if (reconnect ==RE_CONNECT_TIME){
-                    AlarmManagerUtils.stopPollingService(MainActivity.this,PollingService.ACTION);
+                if (reconnect == RE_CONNECT_TIME) {
+                    AlarmManagerUtils.stopPollingService(MainActivity.this, PollingService.ACTION);
                     return;
                 }
                 setTitle("未发包");
@@ -360,9 +382,6 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 //            Toast.makeText(MainActivity.this,"收到了广播", Toast.LENGTH_LONG).show();
         }
     };
-
-
-
 
 
 }
